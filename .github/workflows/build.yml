@@ -30,7 +30,8 @@ jobs:
           & "$vcpkg\vcpkg.exe" install `
             detours:x64-windows-static `
             minhook:x64-windows-static `
-            sol2:x64-windows-static
+            sol2:x64-windows-static `
+            "imgui[core,dx12-binding,win32-binding]:x64-windows-static"
 
           if ($LASTEXITCODE -ne 0) {
             throw "vcpkg dependency installation failed."
@@ -42,14 +43,30 @@ jobs:
       - name: Show dependency locations
         shell: pwsh
         run: |
-          Write-Host "=== sol2 ==="
-          Get-ChildItem "$env:VCPKG_ROOT\installed\x64-windows-static\include" `
-            -Recurse -Filter "sol.hpp" |
+          $inc = "$env:VCPKG_ROOT\installed\x64-windows-static\include"
+          $lib = "$env:VCPKG_ROOT\installed\x64-windows-static\lib"
+
+          Write-Host "=== INCLUDE DIRECTORY ==="
+          Write-Host $inc
+
+          Write-Host "=== sol.hpp ==="
+          Get-ChildItem $inc -Recurse -Filter "sol.hpp" |
             Select-Object FullName
 
-          Write-Host "=== MinHook ==="
-          Get-ChildItem "$env:VCPKG_ROOT\installed\x64-windows-static\include" `
-            -Recurse -Filter "MinHook.h" |
+          Write-Host "=== MinHook.h ==="
+          Get-ChildItem $inc -Recurse -Filter "MinHook.h" |
+            Select-Object FullName
+
+          Write-Host "=== imgui.h ==="
+          Get-ChildItem $inc -Recurse -Filter "imgui.h" |
+            Select-Object FullName
+
+          Write-Host "=== ImGui DX12 backend ==="
+          Get-ChildItem $inc -Recurse -Filter "imgui_impl_dx12.h" |
+            Select-Object FullName
+
+          Write-Host "=== ImGui Win32 backend ==="
+          Get-ChildItem $inc -Recurse -Filter "imgui_impl_win32.h" |
             Select-Object FullName
 
       - name: Build LuaEngineUI Release x64
@@ -62,32 +79,34 @@ jobs:
           /p:VcpkgTriplet=x64-windows-static
           /p:VcpkgUseStatic=true
           /p:VcpkgEnableManifest=false
-          /p:IncludePath="%VCPKG_ROOT%\installed\x64-windows-static\include;$(IncludePath)"
+          /p:IncludePath="%VCPKG_ROOT%\installed\x64-windows-static\include;%VCPKG_ROOT%\installed\x64-windows-static\include\imgui;$(IncludePath)"
           /p:LibraryPath="%VCPKG_ROOT%\installed\x64-windows-static\lib;$(LibraryPath)"
           /v:minimal
 
       - name: Find LuaEngineUI DLL
         shell: pwsh
         run: |
-          Write-Host "=== Searching LuaEngineUI.dll ==="
+          Write-Host "=== Searching build outputs ==="
 
-          $dlls = Get-ChildItem -Path . -Recurse -Filter "LuaEngineUI.dll"
-
-          $dlls | ForEach-Object {
+          Get-ChildItem -Path . -Recurse -Include *.dll |
+            ForEach-Object {
               Write-Host $_.FullName
-          }
+            }
 
-          $dll = $dlls | Select-Object -First 1
+          $dll = Get-ChildItem -Path . -Recurse -Filter "LuaEngineUI.dll" |
+            Select-Object -First 1
 
           if (-not $dll) {
-              throw "LuaEngineUI.dll was not generated."
+            throw "LuaEngineUI.dll was not generated."
           }
 
-          New-Item -ItemType Directory -Force artifact | Out-Null
+          Write-Host "=== FOUND DLL ==="
+          Write-Host $dll.FullName
 
-          Copy-Item `
-            $dll.FullName `
-            "artifact\LuaEngineUI.dll"
+          New-Item -ItemType Directory -Force -Path artifact |
+            Out-Null
+
+          Copy-Item $dll.FullName "artifact\LuaEngineUI.dll"
 
       - name: Upload LuaEngineUI DLL
         uses: actions/upload-artifact@v4
