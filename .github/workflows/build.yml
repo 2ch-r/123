@@ -14,53 +14,182 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # ------------------------------------------------------------
-      # LuaEngineUI 是旧工程，不使用 vcpkg 最新 ImGui。
-      # 固定 Dear ImGui 1.89.9，避免新版 API 不兼容。
-      # ------------------------------------------------------------
+      # ============================================================
+      # Dear ImGui
+      # LuaEngineUI 是旧工程，固定旧版 ImGui
+      # ============================================================
+
       - name: Download compatible Dear ImGui
         shell: powershell
         run: |
           Write-Host "Downloading Dear ImGui v1.89.9..."
-          git clone --depth 1 --branch v1.89.9 https://github.com/ocornut/imgui.git external/imgui
 
-          Write-Host ""
-          Write-Host "ImGui directory:"
+          git clone `
+            --depth 1 `
+            --branch v1.89.9 `
+            https://github.com/ocornut/imgui.git `
+            external/imgui
+
+          Write-Host "=== ImGui ==="
           Get-ChildItem external/imgui
 
-      # ------------------------------------------------------------
-      # 安装项目其余依赖
-      # ------------------------------------------------------------
-      - name: Install vcpkg dependencies
+
+      # ============================================================
+      # Lua 5.3.6
+      # 不使用 vcpkg 当前 Lua
+      # ============================================================
+
+      - name: Download Lua 5.3.6
+        shell: powershell
+        run: |
+          Write-Host "Downloading Lua 5.3.6..."
+
+          Invoke-WebRequest `
+            -Uri "https://www.lua.org/ftp/lua-5.3.6.tar.gz" `
+            -OutFile "lua.tar.gz"
+
+          tar -xzf lua.tar.gz
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            external/lua `
+            | Out-Null
+
+          Copy-Item `
+            "lua-5.3.6/src/*" `
+            "external/lua/" `
+            -Force
+
+          Write-Host "=== Lua source ==="
+          Get-ChildItem external/lua
+
+
+      # ============================================================
+      # vcpkg
+      # 这里只装 sol2 / MinHook
+      # ============================================================
+
+      - name: Install dependencies
         shell: powershell
         run: |
           vcpkg install `
-            lua:x64-windows-static `
             sol2:x64-windows-static `
             minhook:x64-windows-static
+
+
+      # ============================================================
+      # 检查头文件
+      # ============================================================
 
       - name: Show dependency locations
         shell: powershell
         run: |
-          Write-Host "=== ImGui ==="
-          Get-ChildItem external/imgui
+          Write-Host ""
+          Write-Host "============================"
+          Write-Host "Lua"
+          Write-Host "============================"
 
-          Write-Host "=== Lua ==="
-          Get-ChildItem C:\vcpkg\installed\x64-windows-static\include | Select-Object -First 20
+          Get-ChildItem external/lua
 
-          Write-Host "=== sol2 ==="
-          Get-ChildItem C:\vcpkg\installed\x64-windows-static\include\sol | Select-Object -First 20
+          Write-Host ""
+          Write-Host "Checking lua_register..."
 
-          Write-Host "=== MinHook ==="
-          Get-ChildItem C:\vcpkg\installed\x64-windows-static\include | Where-Object {$_.Name -match "MinHook"}
+          Select-String `
+            -Path "external/lua/lua.h" `
+            -Pattern "lua_register"
 
-      # ------------------------------------------------------------
-      # Build
+          Write-Host ""
+          Write-Host "============================"
+          Write-Host "ImGui"
+          Write-Host "============================"
+
+          Get-ChildItem external/imgui | Select-Object -First 20
+
+          Write-Host ""
+          Write-Host "============================"
+          Write-Host "sol2"
+          Write-Host "============================"
+
+          Get-ChildItem `
+            C:\vcpkg\installed\x64-windows-static\include\sol `
+            | Select-Object -First 20
+
+          Write-Host ""
+          Write-Host "============================"
+          Write-Host "MinHook"
+          Write-Host "============================"
+
+          Get-ChildItem `
+            C:\vcpkg\installed\x64-windows-static\include `
+            | Where-Object {$_.Name -match "MinHook"}
+
+
+      # ============================================================
+      # Build Lua 5.3.6 static library
+      # ============================================================
+
+      - name: Build Lua 5.3.6 static library
+        shell: cmd
+        run: |
+          mkdir external\lua-build
+
+          cl /nologo /c /O2 /MT ^
+            /Iexternal\lua ^
+            external\lua\lapi.c ^
+            external\lua\lcode.c ^
+            external\lua\lctype.c ^
+            external\lua\ldebug.c ^
+            external\lua\ldo.c ^
+            external\lua\ldump.c ^
+            external\lua\lfunc.c ^
+            external\lua\lgc.c ^
+            external\lua\llex.c ^
+            external\lua\lmem.c ^
+            external\lua\lobject.c ^
+            external\lua\lopcodes.c ^
+            external\lua\lparser.c ^
+            external\lua\lstate.c ^
+            external\lua\lstring.c ^
+            external\lua\ltable.c ^
+            external\lua\ltm.c ^
+            external\lua\lundump.c ^
+            external\lua\lvm.c ^
+            external\lua\lzio.c ^
+            external\lua\lauxlib.c ^
+            external\lua\lbaselib.c ^
+            external\lua\lbitlib.c ^
+            external\lua\lcorolib.c ^
+            external\lua\ldblib.c ^
+            external\lua\liolib.c ^
+            external\lua\lmathlib.c ^
+            external\lua\loslib.c ^
+            external\lua\lstrlib.c ^
+            external\lua\ltablib.c ^
+            external\lua\lutf8lib.c ^
+            external\lua\loadlib.c ^
+            external\lua\linit.c
+
+          lib /nologo ^
+            /OUT:external\lua-build\lua53.lib ^
+            *.obj
+
+          del *.obj
+
+          dir external\lua-build
+
+
+      # ============================================================
+      # Build LuaEngineUI
       #
-      # 关键：
-      # external\imgui 必须放在 vcpkg include 前面，
-      # 防止编译器又找到 vcpkg 的新版 imgui。
-      # ------------------------------------------------------------
+      # Include 顺序非常重要：
+      #
+      # 1. Lua 5.3.6
+      # 2. ImGui 1.89.9
+      # 3. ImGui backends
+      # 4. vcpkg
+      # ============================================================
+
       - name: Build LuaEngineUI Release x64
         shell: cmd
         run: |
@@ -70,20 +199,27 @@ jobs:
             /p:VcpkgTriplet=x64-windows-static ^
             /p:VcpkgUseStatic=true ^
             /p:VcpkgEnableManifest=false ^
-            /p:IncludePath="%GITHUB_WORKSPACE%\external\imgui;%GITHUB_WORKSPACE%\external\imgui\backends;C:\vcpkg\installed\x64-windows-static\include;$(IncludePath)" ^
-            /p:LibraryPath="C:\vcpkg\installed\x64-windows-static\lib;$(LibraryPath)" ^
+            /p:IncludePath="%GITHUB_WORKSPACE%\external\lua;%GITHUB_WORKSPACE%\external\imgui;%GITHUB_WORKSPACE%\external\imgui\backends;C:\vcpkg\installed\x64-windows-static\include;$(IncludePath)" ^
+            /p:LibraryPath="%GITHUB_WORKSPACE%\external\lua-build;C:\vcpkg\installed\x64-windows-static\lib;$(LibraryPath)" ^
+            /p:AdditionalDependencies="lua53.lib;$(AdditionalDependencies)" ^
             /v:minimal
 
-      # ------------------------------------------------------------
-      # 找 DLL
-      # ------------------------------------------------------------
+
+      # ============================================================
+      # 找生成的 DLL
+      # ============================================================
+
       - name: Find LuaEngineUI DLL
         if: success()
         shell: powershell
         run: |
-          Write-Host "=== Searching generated DLL ==="
+          Write-Host ""
+          Write-Host "=== Searching DLL ==="
 
-          $dlls = Get-ChildItem -Path . -Recurse -Filter *.dll |
+          $dlls = Get-ChildItem `
+            -Path . `
+            -Recurse `
+            -Filter *.dll |
             Where-Object {
               $_.FullName -notmatch "\\external\\" -and
               $_.FullName -notmatch "\\packages\\"
@@ -94,7 +230,9 @@ jobs:
           }
 
           $target = $dlls |
-            Where-Object {$_.Name -match "LuaEngineUI"} |
+            Where-Object {
+              $_.Name -match "LuaEngineUI"
+            } |
             Select-Object -First 1
 
           if (-not $target) {
@@ -102,16 +240,27 @@ jobs:
             exit 1
           }
 
-          New-Item -ItemType Directory -Force artifact | Out-Null
-          Copy-Item $target.FullName artifact\LuaEngineUI.dll
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            artifact |
+            Out-Null
+
+          Copy-Item `
+            $target.FullName `
+            artifact\LuaEngineUI.dll
 
           Write-Host ""
-          Write-Host "SUCCESS:"
+          Write-Host "================================"
+          Write-Host "BUILD SUCCESS"
+          Write-Host "================================"
           Write-Host $target.FullName
 
-      # ------------------------------------------------------------
+
+      # ============================================================
       # 上传 DLL
-      # ------------------------------------------------------------
+      # ============================================================
+
       - name: Upload LuaEngineUI DLL
         if: success()
         uses: actions/upload-artifact@v4
