@@ -25,11 +25,26 @@ jobs:
 
           Write-Host "Using vcpkg: $vcpkg"
 
+          if (-not (Test-Path "$vcpkg\vcpkg.exe")) {
+            Write-Host "vcpkg not found, cloning..."
+
+            git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+
+            C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+            $vcpkg = "C:\vcpkg"
+          }
+
+          Write-Host "Integrating vcpkg..."
+
           & "$vcpkg\vcpkg.exe" integrate install
+
+          Write-Host "Installing dependencies..."
 
           & "$vcpkg\vcpkg.exe" install `
             detours:x64-windows-static `
             minhook:x64-windows-static `
+            lua:x64-windows-static `
             sol2:x64-windows-static `
             "imgui[core,dx12-binding,win32-binding]:x64-windows-static"
 
@@ -46,28 +61,78 @@ jobs:
           $inc = "$env:VCPKG_ROOT\installed\x64-windows-static\include"
           $lib = "$env:VCPKG_ROOT\installed\x64-windows-static\lib"
 
-          Write-Host "=== INCLUDE DIRECTORY ==="
+          Write-Host "======================================"
+          Write-Host "VCPKG ROOT"
+          Write-Host "======================================"
+          Write-Host $env:VCPKG_ROOT
+
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "INCLUDE DIRECTORY"
+          Write-Host "======================================"
           Write-Host $inc
 
-          Write-Host "=== sol.hpp ==="
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "LIBRARY DIRECTORY"
+          Write-Host "======================================"
+          Write-Host $lib
+
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "sol.hpp"
+          Write-Host "======================================"
+
           Get-ChildItem $inc -Recurse -Filter "sol.hpp" |
             Select-Object FullName
 
-          Write-Host "=== MinHook.h ==="
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "lua.h"
+          Write-Host "======================================"
+
+          Get-ChildItem $inc -Recurse -Filter "lua.h" |
+            Select-Object FullName
+
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "MinHook.h"
+          Write-Host "======================================"
+
           Get-ChildItem $inc -Recurse -Filter "MinHook.h" |
             Select-Object FullName
 
-          Write-Host "=== imgui.h ==="
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "imgui.h"
+          Write-Host "======================================"
+
           Get-ChildItem $inc -Recurse -Filter "imgui.h" |
             Select-Object FullName
 
-          Write-Host "=== ImGui DX12 backend ==="
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "imgui_impl_dx12.h"
+          Write-Host "======================================"
+
           Get-ChildItem $inc -Recurse -Filter "imgui_impl_dx12.h" |
             Select-Object FullName
 
-          Write-Host "=== ImGui Win32 backend ==="
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "imgui_impl_win32.h"
+          Write-Host "======================================"
+
           Get-ChildItem $inc -Recurse -Filter "imgui_impl_win32.h" |
             Select-Object FullName
+
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "AVAILABLE LIB FILES"
+          Write-Host "======================================"
+
+          Get-ChildItem $lib -Filter "*.lib" |
+            Select-Object Name, FullName
 
       - name: Build LuaEngineUI Release x64
         shell: cmd
@@ -86,27 +151,44 @@ jobs:
       - name: Find LuaEngineUI DLL
         shell: pwsh
         run: |
-          Write-Host "=== Searching build outputs ==="
+          Write-Host "======================================"
+          Write-Host "SEARCHING BUILD OUTPUTS"
+          Write-Host "======================================"
 
           Get-ChildItem -Path . -Recurse -Include *.dll |
             ForEach-Object {
               Write-Host $_.FullName
             }
 
-          $dll = Get-ChildItem -Path . -Recurse -Filter "LuaEngineUI.dll" |
+          $dll = Get-ChildItem `
+            -Path . `
+            -Recurse `
+            -Filter "LuaEngineUI.dll" |
             Select-Object -First 1
 
           if (-not $dll) {
             throw "LuaEngineUI.dll was not generated."
           }
 
-          Write-Host "=== FOUND DLL ==="
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "FOUND LuaEngineUI.dll"
+          Write-Host "======================================"
+
           Write-Host $dll.FullName
 
-          New-Item -ItemType Directory -Force -Path artifact |
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path artifact |
             Out-Null
 
-          Copy-Item $dll.FullName "artifact\LuaEngineUI.dll"
+          Copy-Item `
+            $dll.FullName `
+            "artifact\LuaEngineUI.dll"
+
+          Write-Host ""
+          Write-Host "DLL copied to artifact directory."
 
       - name: Upload LuaEngineUI DLL
         uses: actions/upload-artifact@v4
